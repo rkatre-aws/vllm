@@ -33,8 +33,12 @@ from .utils import extract_layer_index, maybe_prefix
 from vllm.model_executor.layers.fused_moe.fused_moe import fused_topk
 
 import os
+DUMP_DIRECTORY="/home/ubuntu/rkatre/scripts/vllm_goldens/"
+MAX_TOKEN = 3
+MAX_LAYER = 3
+current_layer = 0
+current_pass = 0
 
-token_idx = 0
 
 class OAIAttention(nn.Module):
 
@@ -172,37 +176,23 @@ class MLPBlock(torch.nn.Module):
         g = self.router(t)
         t = self.experts(hidden_states=t, router_logits=g)
 
-        if os.environ.get('ROUTER_STATISTICS_DIR'):
-            topk_weights, topk_ids, token_expert_indices = fused_topk(
-                hidden_states=t,
-                gating_output=g,
-                topk=self.experts_per_token,
-                renormalize=True,
-                indices_type=None,
-            )
-            torch.save(topk_ids.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"topk_ids_layer_{self.layer_idx}_token_{token_idx}.pt"))
-            torch.save(token_expert_indices.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"token_expert_indices_layer_{self.layer_idx}_token_{token_idx}.pt"))
-            torch.save(topk_weights.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"topk_weights_layer_{self.layer_idx}_token_{token_idx}.pt"))
-
-        if DUMP_DIRECTORY := os.environ.get('MOE_GOLDENS_DIR'):
-            global token_idx
-            MAX_TOKEN_IDX = os.environ.get('MAX_TOKEN_IDX', 4)
-            MAX_LAYER_IDX = os.environ.get('MAX_LAYER_IDX', 4)
-
-            if token_idx < MAX_TOKEN_IDX and self.layer_idx < MAX_LAYER_IDX :
-                topk_weights, topk_ids, token_expert_indices = fused_topk(
-                    hidden_states=t,
-                    gating_output=g,
-                    topk=self.experts_per_token,
-                    renormalize=True,
-                    indices_type=None,
-                )
-                torch.save(g.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"router_logits_layer_{self.layer_idx}_token_{token_idx}.pt"))
-                torch.save(x.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"hidden_states_input_pre_rmsnorm_layer_{self.layer_idx}_token_{token_idx}.pt"))
-                torch.save(t.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"routed_out_layer_{self.layer_idx}_token_{token_idx}.pt"))
-                torch.save(topk_ids.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"topk_ids_layer_{self.layer_idx}_token_{token_idx}.pt"))
-                torch.save(token_expert_indices.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"token_expert_indices_layer_{self.layer_idx}_token_{token_idx}.pt"))
-                torch.save(topk_weights.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"topk_weights_layer_{self.layer_idx}_token_{token_idx}.pt"))
+        topk_weights, topk_ids, token_expert_indices = fused_topk(
+            hidden_states=t,
+            gating_output=g,
+            topk=self.experts_per_token,
+            renormalize=True,
+            indices_type=None,
+        )
+        
+        global current_layer
+        global current_pass
+        if current_pass <= MAX_TOKEN and current_layer <= MAX_LAYER:
+            torch.save(g.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"router_logits_layer_{current_layer}_pass_{current_pass}.pt"))
+            torch.save(x.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"hidden_states_input_pre_rmsnorm_layer_{current_layer}_pass_{current_pass}.pt"))
+            torch.save(t.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"routed_out_layer_{current_layer}_pass_{current_pass}.pt"))
+            torch.save(topk_ids.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"topk_ids_layer_{current_layer}_pass_{current_pass}.pt"))
+            torch.save(token_expert_indices.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"token_expert_indices_layer_{current_layer}_pass_{current_pass}.pt"))
+            torch.save(topk_weights.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"topk_weights_layer_{current_layer}_pass_{current_pass}.pt"))
 
         return x + t
 
@@ -259,19 +249,18 @@ class GptOssModel(nn.Module):
     def forward(self, input_ids: torch.Tensor,
                 positions: torch.Tensor) -> torch.Tensor:
         x = self.embedding(input_ids)
-        
-        if DUMP_DIRECTORY := os.environ.get('MOE_GOLDENS_DIR'):
-            MAX_TOKEN_IDX = os.environ.get('MAX_TOKEN_IDX', 4)
-            MAX_LAYER_IDX = os.environ.get('MAX_LAYER_IDX', 4)
-            global token_idx
-            
-            if token_idx <= MAX_TOKEN_IDX:
-                torch.save(x.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"embeds_token_{token_idx}.pt"))
+        global current_layer
+        global current_pass
 
+        if current_pass <= MAX_TOKEN and current_layer <= MAX_LAYER:
+            torch.save(x.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"embeds_pass_{current_pass}.pt"))
+
+        current_layer = 0
         for layer in self.layers:
             x = layer(x, positions)
+            current_layer += 1
         x = self.norm(x)
-        token_idx += 1
+        current_pass += 1
         return x
 
 
