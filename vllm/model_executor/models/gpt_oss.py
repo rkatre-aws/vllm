@@ -6,6 +6,7 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 from torch import nn
+from torch.profiler import record_function
 from transformers import GptOssConfig
 
 from vllm.attention import Attention, AttentionType
@@ -115,7 +116,7 @@ class OAIAttention(nn.Module):
             prefix=f"{prefix}.attn",
             sinks=self.sinks,
         )
-
+    @record_function("OAIAttention")
     def forward(self, hidden_states: torch.Tensor,
                 positions: torch.Tensor) -> torch.Tensor:
         t = self.norm(hidden_states)
@@ -161,6 +162,7 @@ class MLPBlock(torch.nn.Module):
                                 has_bias=True,
                                 activation="swigluoai")
 
+    @record_function("MLPBlock")
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         t = self.norm(x)
         g = self.router(t)
