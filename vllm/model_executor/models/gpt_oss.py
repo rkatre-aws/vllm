@@ -170,7 +170,9 @@ class MLPBlock(torch.nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         t = self.norm(x)
         g = self.router(t)
-        t = self.experts(hidden_states=t, router_logits=g)
+
+        t_all = self.experts(hidden_states=t, router_logits=g)
+
 
         if os.environ.get('ROUTER_STATISTICS_DIR'):
             topk_weights, topk_ids, token_expert_indices = fused_topk(
@@ -197,14 +199,22 @@ class MLPBlock(torch.nn.Module):
                     renormalize=True,
                     indices_type=None,
                 )
+
+                for e in range(128):
+                    g_mask = torch.zeros_like(g)
+                    g_mask[:, e] = g[:, e]
+                    t_expert = self.experts(hidden_states=t, router_logits=g_mask)
+                    # SAVE T EXPERT HERE
+                    torch.save(t_expert.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"expert_{e}_out_layer_{self.layer_idx}_token_{token_idx}.pt"))
+
                 torch.save(g.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"router_logits_layer_{self.layer_idx}_token_{token_idx}.pt"))
                 torch.save(x.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"hidden_states_input_pre_rmsnorm_layer_{self.layer_idx}_token_{token_idx}.pt"))
                 torch.save(t.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"routed_out_layer_{self.layer_idx}_token_{token_idx}.pt"))
                 torch.save(topk_ids.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"topk_ids_layer_{self.layer_idx}_token_{token_idx}.pt"))
                 torch.save(token_expert_indices.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"token_expert_indices_layer_{self.layer_idx}_token_{token_idx}.pt"))
                 torch.save(topk_weights.clone().cpu(), os.path.join(DUMP_DIRECTORY, f"topk_weights_layer_{self.layer_idx}_token_{token_idx}.pt"))
-
-        return x + t
+        
+        return x + t_all
 
 
 class TransformerBlock(torch.nn.Module):
